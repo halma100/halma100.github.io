@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover"/>
+  <title>Tarefas</title>
+  <meta name="apple-mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-status-bar-style" content="default"/>
+  <meta name="apple-mobile-web-app-title" content="Tarefas"/>
+  <meta name="theme-color" content="#F2F2F7"/>
+  <style>
+    *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+    body{background:#F2F2F7;overscroll-behavior:none;font-family:-apple-system,'SF Pro Text','Helvetica Neue',sans-serif;}
+    input,textarea,button{font-family:inherit;}
+    ::-webkit-scrollbar{display:none;}
+  </style>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useRef, useEffect } = React;
+const PRIORITIES = {
+  p1: { label:"Alta",  bg:"#FDE8E8", text:"#A81A1A", dot:"#E42E2E", icon:"!!!" },
+  p2: { label:"Média", bg:"#FDF5E8", text:"#8A5A00", dot:"#D4A017", icon:"!!"  },
+  p3: { label:"Baixa", bg:"#E8F4FD", text:"#1A6FA8", dot:"#2E9DE4", icon:"!"   },
+};
+const TAG_COLORS = {
+  clientes: {bg:"#E8F4FD",text:"#1A6FA8",dot:"#2E9DE4"},
+  stock:    {bg:"#E8FDF0",text:"#1A7A3F",dot:"#2ECC71"},
+  joalharia:{bg:"#FDF5E8",text:"#8A5A00",dot:"#D4A017"},
+  saúde:    {bg:"#F0E8FD",text:"#5A1A8A",dot:"#8E44AD"},
+  crossfit: {bg:"#FDE8F5",text:"#8A1A5A",dot:"#C0392B"},
+  casa:     {bg:"#E8FDFC",text:"#1A7A75",dot:"#17A589"},
+  viagens:  {bg:"#FDF0E8",text:"#8A3A00",dot:"#E67E22"},
+  trabalho: {bg:"#EEE8FD",text:"#3A1A8A",dot:"#6C3DE4"},
+};
+const DEF_COLOR = {bg:"#F0F0F2",text:"#555",dot:"#999"};
+const getTagColor = t => TAG_COLORS[t.toLowerCase()] || DEF_COLOR;
+const LS_TASKS="tf_tasks_v1", LS_DONE="tf_done_v1", LS_TAGS="tf_tags_v1";
+const lsGet=(k,fb)=>{ try{const v=localStorage.getItem(k);return v?JSON.parse(v):fb;}catch{return fb;} };
+const lsSet=(k,v)=>{ try{localStorage.setItem(k,JSON.stringify(v));}catch{} };
+function getToday(){const d=new Date();d.setHours(0,0,0,0);return d;}
+const DS={hoje:0,amanhã:1,amanha:1,"2dias":2,semana:7,proxsem:7,"próxsem":7};
+function parseDate(str){
+  const s=str.toLowerCase();
+  if(DS[s]!==undefined){const d=getToday();d.setDate(d.getDate()+DS[s]);return d;}
+  const m1=s.match(/^(\d{1,2})\/(\d{1,2})$/);
+  if(m1){const d=new Date(getToday().getFullYear(),parseInt(m1[2])-1,parseInt(m1[1]));if(d<getToday())d.setFullYear(d.getFullYear()+1);return d;}
+  const MO=["jan","fev","mar","abr","mai","jun","jul","ago","set","out","nov","dez"];
+  const m2=s.match(/^(\d{1,2})([a-záéíóúâêîôûãõàèìòùç]{3})$/);
+  if(m2){const mi=MO.indexOf(m2[2]);if(mi>=0){const d=new Date(getToday().getFullYear(),mi,parseInt(m2[1]));if(d<getToday())d.setFullYear(d.getFullYear()+1);return d;}}
+  return null;
+}
+function formatDate(iso){
+  if(!iso)return null;
+  const today=getToday(),date=new Date(iso);date.setHours(0,0,0,0);
+  const diff=Math.round((date-today)/86400000);
+  if(diff===0)return{label:"Hoje",urgent:true};
+  if(diff===1)return{label:"Amanhã",urgent:true};
+  if(diff<0)return{label:`${Math.abs(diff)}d atraso`,overdue:true};
+  const days=["Dom","Seg","Ter","Qua","Qui","Sex","Sáb"];
+  const months=["jan","fev","mar","abr","mai","jun","jul","ago","set","out","nov","dez"];
+  if(diff<7)return{label:days[date.getDay()]};
+  return{label:`${date.getDate()} ${months[date.getMonth()]}`};
+}
+function toInputDate(iso){
+  if(!iso)return"";
+  const d=new Date(iso);
+  return`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+}
+function fromInputDate(str){
+  if(!str)return null;
+  const[y,m,d]=str.split("-").map(Number);
+  return new Date(y,m-1,d).toISOString();
+}
+function parseTaskInput(raw){
+  let text=raw; const tags=[]; let priority=null,dueDate=null;
+  text=text.replace(/!([123])/g,(_,p)=>{priority=`p${p}`;return"";});
+  text=text.replace(/@([\w\/áéíóúâêîôûãõàèìòùç]+)/gi,(_,d)=>{const p=parseDate(d);if(p){dueDate=p.toISOString();return"";}return`@${d}`;});
+  text=text.replace(/#([\w\u00C0-\u024F]+)/g,(_,t)=>{tags.push(t.toLowerCase());return"";});
+  return{text:text.replace(/\s+/g," ").trim(),tags:[...new Set(tags)],priority,dueDate};
+}
+function daysFromNow(n){const d=getToday();d.setDate(d.getDate()+n);return d.toISOString();}
+const SEED_TASKS=[
+  {id:1,text:"Ligar ao cliente da Aveiro sobre encomenda",tags:["clientes"],priority:"p1",dueDate:daysFromNow(0)},
+  {id:2,text:"Verificar stock de alianças 18k",tags:["stock","joalharia"],priority:"p2",dueDate:daysFromNow(2)},
+  {id:3,text:"Treino CrossFit — snatch + AMRAP",tags:["crossfit","saúde"],priority:"p3",dueDate:daysFromNow(1)},
+  {id:4,text:"Enviar proposta colar ouro branco",tags:["clientes","joalharia"],priority:"p2",dueDate:daysFromNow(3)},
+  {id:5,text:"Regar as plantas da varanda",tags:["casa"],priority:"p3",dueDate:daysFromNow(1)},
+  {id:6,text:"Confirmar voo Terceira → Porto",tags:["viagens"],priority:"p1",dueDate:daysFromNow(0)},
+];
+const SEED_TAGS=["clientes","stock","joalharia","crossfit","saúde","casa","viagens","trabalho"];
+function PriorityBadge({level,onClick,small}){
+  if(!level)return null;
+  const p=PRIORITIES[level];
+  return <button onClick={onClick} style={{background:p.bg,color:p.text,border:"none",borderRadius:20,padding:small?"2px 7px":"3px 9px",fontSize:small?11:12,fontFamily:"inherit",fontWeight:700,cursor:onClick?"pointer":"default",display:"inline-flex",alignItems:"center",gap:3,whiteSpace:"nowrap"}} onMouseEnter={e=>onClick&&(e.currentTarget.style.opacity="0.75")} onMouseLeave={e=>(e.currentTarget.style.opacity="1")}><span style={{color:p.dot,fontSize:small?9:10,fontWeight:900}}>{p.icon}</span>{p.label}</button>;
+}
+function DateBadge({iso,small}){
+  if(!iso)return null;
+  const f=formatDate(iso);if(!f)return null;
+  return <span style={{display:"inline-flex",alignItems:"center",gap:3,background:f.overdue?"#FDE8E8":f.urgent?"#FFF3E0":"#F2F2F7",color:f.overdue?"#A81A1A":f.urgent?"#8A5A00":"#555",borderRadius:20,padding:small?"2px 7px":"3px 9px",fontSize:small?11:12,fontWeight:600,whiteSpace:"nowrap"}}><svg width="9" height="9" viewBox="0 0 12 12" fill="none"><rect x="1" y="2" width="10" height="9" rx="2" stroke="currentColor" strokeWidth="1.5"/><path d="M4 1v2M8 1v2M1 5h10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>{f.label}</span>;
+}
+function Tag({label,onClick,small}){
+  const c=getTagColor(label);
+  return <button onClick={onClick} style={{background:c.bg,color:c.text,border:"none",borderRadius:20,padding:small?"2px 8px":"3px 10px",fontSize:small?11:12,fontFamily:"inherit",fontWeight:600,cursor:onClick?"pointer":"default",display:"inline-flex",alignItems:"center",gap:4,whiteSpace:"nowrap"}} onMouseEnter={e=>onClick&&(e.currentTarget.style.opacity="0.75")} onMouseLeave={e=>(e.currentTarget.style.opacity="1")}><span style={{width:6,height:6,borderRadius:"50%",background:c.dot,flexShrink:0}}/>{label}</button>;
+}
+function EditModal({task,allSavedTags,onSave,onDelete,onClose}){
+  const [text,setText]=useState(task.text);
+  const [tags,setTags]=useState(task.tags.join(" "));
+  const [priority,setPriority]=useState(task.priority||"");
+  const [dueDate,setDueDate]=useState(toInputDate(task.dueDate));
+  const textRef=useRef(null);
+  useEffect(()=>{textRef.current?.focus();},[]);
+  const save=()=>{
+    const parsedTags=tags.split(/[\s,]+/).map(t=>t.replace(/^#/,"").toLowerCase()).filter(Boolean);
+    onSave({...task,text:text.trim()||task.text,tags:[...new Set(parsedTags)],priority:priority||null,dueDate:fromInputDate(dueDate)});
+  };
+  const currentTags=tags.split(/[\s,]+/).map(t=>t.replace(/^#/,"").toLowerCase()).filter(Boolean);
+  const suggestedTags=allSavedTags.filter(t=>!currentTags.includes(t));
+  return(<div style={{position:"fixed",inset:0,zIndex:100,background:"rgba(0,0,0,0.4)",display:"flex",alignItems:"flex-end"}} onClick={e=>e.target===e.currentTarget&&onClose()}><div style={{width:"100%",background:"#FFF",borderRadius:"20px 20px 0 0",padding:"0 0 40px",maxHeight:"90vh",overflowY:"auto"}}><div style={{display:"flex",justifyContent:"center",padding:"12px 0 4px"}}><div style={{width:36,height:4,borderRadius:2,background:"#D0D0D8"}}/></div><div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 20px 16px"}}><span style={{fontSize:17,fontWeight:700,color:"#1C1C1E"}}>Editar tarefa</span><button onClick={onClose} style={{background:"none",border:"none",fontSize:15,color:"#007AFF",fontFamily:"inherit",cursor:"pointer",fontWeight:500}}>Cancelar</button></div><div style={{padding:"0 20px",display:"flex",flexDirection:"column",gap:16}}><div><label style={{fontSize:12,fontWeight:600,color:"#8E8E93",textTransform:"uppercase",letterSpacing:"0.04em",display:"block",marginBottom:6}}>Tarefa</label><textarea ref={textRef} value={text} onChange={e=>setText(e.target.value)} rows={3} style={{width:"100%",background:"#F2F2F7",border:"none",borderRadius:12,padding:"12px 14px",fontSize:15,fontFamily:"inherit",color:"#1C1C1E",outline:"none",resize:"none",lineHeight:1.4}}/></div><div><label style={{fontSize:12,fontWeight:600,color:"#8E8E93",textTransform:"uppercase",letterSpacing:"0.04em",display:"block",marginBottom:6}}>Data</label><div style={{display:"flex",gap:8,alignItems:"center"}}><input type="date" value={dueDate} onChange={e=>setDueDate(e.target.value)} style={{flex:1,background:"#F2F2F7",border:"none",borderRadius:12,padding:"12px 14px",fontSize:15,fontFamily:"inherit",color:"#1C1C1E",outline:"none"}}/>{dueDate&&<button onClick={()=>setDueDate("")} style={{background:"#F2F2F7",border:"none",borderRadius:10,padding:"12px 14px",fontSize:13,color:"#8E8E93",fontFamily:"inherit",cursor:"pointer"}}>Limpar</button>}</div><div style={{display:"flex",gap:6,marginTop:8,flexWrap:"wrap"}}>{[["Hoje",0],["Amanhã",1],["Em 2 dias",2],["Próx. semana",7]].map(([label,days])=>(<button key={label} onClick={()=>{const d=getToday();d.setDate(d.getDate()+days);setDueDate(toInputDate(d.toISOString()));}} style={{background:"#F2F2F7",border:"none",borderRadius:20,padding:"6px 12px",fontSize:12,fontFamily:"inherit",color:"#1C1C1E",cursor:"pointer",fontWeight:500}}>{label}</button>))}</div></div><div><label style={{fontSize:12,fontWeight:600,color:"#8E8E93",textTransform:"uppercase",letterSpacing:"0.04em",display:"block",marginBottom:6}}>Prioridade</label><div style={{display:"flex",gap:8}}>{Object.entries(PRIORITIES).map(([key,p])=>(<button key={key} onClick={()=>setPriority(priority===key?"":key)} style={{flex:1,background:priority===key?p.bg:"#F2F2F7",border:priority===key?`2px solid ${p.dot}`:"2px solid transparent",borderRadius:12,padding:"10px 0",fontSize:13,fontFamily:"inherit",color:priority===key?p.text:"#555",cursor:"pointer",fontWeight:700,transition:"all 0.15s",display:"flex",flexDirection:"column",alignItems:"center",gap:2}}><span style={{fontSize:10,color:priority===key?p.dot:"#999"}}>{p.icon}</span>{p.label}</button>))}{priority&&<button onClick={()=>setPriority("")} style={{background:"#F2F2F7",border:"2px solid transparent",borderRadius:12,padding:"10px 14px",fontSize:12,fontFamily:"inherit",color:"#8E8E93",cursor:"pointer"}}>Nenhuma</button>}</div></div><div><label style={{fontSize:12,fontWeight:600,color:"#8E8E93",textTransform:"uppercase",letterSpacing:"0.04em",display:"block",marginBottom:6}}>Tags</label><input value={tags} onChange={e=>setTags(e.target.value)} placeholder="clientes joalharia viagens…" style={{width:"100%",background:"#F2F2F7",border:"none",borderRadius:12,padding:"12px 14px",fontSize:15,fontFamily:"inherit",color:"#1C1C1E",outline:"none"}}/>{suggestedTags.length>0&&(<div style={{marginTop:8}}><div style={{fontSize:11.5,color:"#8E8E93",marginBottom:5}}>Tags guardadas:</div><div style={{display:"flex",flexWrap:"wrap",gap:5}}>{suggestedTags.map(t=>(<button key={t} onClick={()=>setTags(prev=>(prev.trim()+" "+t).trim())} style={{background:getTagColor(t).bg,color:getTagColor(t).text,border:"none",borderRadius:20,padding:"4px 10px",fontSize:12,fontFamily:"inherit",fontWeight:600,cursor:"pointer",display:"inline-flex",alignItems:"center",gap:4}}><span style={{width:5,height:5,borderRadius:"50%",background:getTagColor(t).dot}}/>{t}</button>))}</div></div>)}<div style={{fontSize:12,color:"#8E8E93",marginTop:6}}>Separa por espaço, sem # necessário</div></div><button onClick={save} style={{width:"100%",background:"#007AFF",color:"white",border:"none",borderRadius:14,padding:"15px",fontSize:16,fontWeight:600,fontFamily:"inherit",cursor:"pointer",marginTop:4}}>Guardar</button><button onClick={()=>onDelete(task.id)} style={{width:"100%",background:"none",color:"#FF3B30",border:"none",borderRadius:14,padding:"12px",fontSize:15,fontWeight:500,fontFamily:"inherit",cursor:"pointer"}}>Apagar tarefa</button></div></div></div>);
+}
+function TaskRow({task,done,onToggle,onTagClick,onPriorityClick,onEdit}){
+  const hasMeta=task.tags.length>0||task.priority||task.dueDate;
+  return(<div style={{display:"flex",alignItems:"flex-start",gap:12,padding:"12px 0",borderBottom:"1px solid #F2F2F4",opacity:done?0.4:1,transition:"opacity 0.2s"}}><button onClick={onToggle} style={{width:23,height:23,borderRadius:"50%",border:done?"none":`2px solid ${task.priority?PRIORITIES[task.priority]?.dot:"#D0D0D8"}`,background:done?"#34C759":"transparent",cursor:"pointer",flexShrink:0,marginTop:1,display:"flex",alignItems:"center",justifyContent:"center",transition:"all 0.2s"}}>{done&&<svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M2 6l3 3 5-5" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>}</button><div style={{flex:1,minWidth:0}}><div style={{fontSize:15,fontWeight:450,color:"#1C1C1E",lineHeight:1.4,textDecoration:done?"line-through":"none",marginBottom:hasMeta?6:0}}>{task.text}</div>{hasMeta&&(<div style={{display:"flex",flexWrap:"wrap",gap:4,alignItems:"center"}}>{task.priority&&<PriorityBadge level={task.priority} small onClick={()=>onPriorityClick(task.priority)}/>}{task.dueDate&&<DateBadge iso={task.dueDate} small/>}{task.tags.map(tag=><Tag key={tag} label={tag} small onClick={()=>onTagClick(tag)}/>)}</div>)}</div><button onClick={onEdit} style={{background:"none",border:"none",cursor:"pointer",padding:"2px 0 2px 4px",flexShrink:0,display:"flex",alignItems:"center"}}><svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M11.5 2.5l2 2-9 9H2.5v-2l9-9z" stroke="#C7C7CC" strokeWidth="1.4" strokeLinejoin="round"/></svg></button></div>);
+}
+function AddTaskBar({prefixTag,prefixPriority,allSavedTags,onAdd,onCancel}){
+  const prefix=`${prefixPriority?"!"+prefixPriority.replace("p","")+" ":""}${prefixTag?"#"+prefixTag+" ":""}`;
+  const [value,setValue]=useState(prefix);
+  const inputRef=useRef(null);
+  useEffect(()=>{inputRef.current?.focus();const l=value.length;inputRef.current?.setSelectionRange(l,l);},[]);
+  const parsed=parseTaskInput(value);
+  const submit=()=>{if(!parsed.text)return;onAdd(parsed);setValue(prefix);};
+  const hasPreview=parsed.tags.length||parsed.priority||parsed.dueDate;
+  const suggested=allSavedTags.filter(t=>!parsed.tags.includes(t)&&(!prefixTag||t!==prefixTag));
+  return(<div style={{background:"#FFF",borderTop:"1px solid #E8E8EC",paddingTop:8}}>{hasPreview&&(<div style={{display:"flex",flexWrap:"wrap",gap:4,padding:"0 16px 10px",alignItems:"center"}}>{parsed.priority&&<PriorityBadge level={parsed.priority} small/>}{parsed.dueDate&&<DateBadge iso={parsed.dueDate} small/>}{parsed.tags.map(t=><Tag key={t} label={t} small/>)}</div>)}<div style={{display:"flex",alignItems:"center",gap:8,padding:"0 16px 8px"}}><div style={{flex:1,background:"#F2F2F7",borderRadius:12,padding:"10px 14px",display:"flex",alignItems:"center",gap:8}}><input ref={inputRef} value={value} onChange={e=>setValue(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"&&parsed.text)submit();if(e.key==="Escape")onCancel();}} placeholder="Nova tarefa… #tag @amanhã !1" style={{flex:1,border:"none",background:"transparent",fontSize:15,fontFamily:"inherit",color:"#1C1C1E",outline:"none"}}/></div><button onClick={submit} disabled={!parsed.text} style={{background:parsed.text?"#007AFF":"#C7C7CC",color:"white",border:"none",borderRadius:10,padding:"10px 14px",fontSize:14,fontWeight:600,cursor:parsed.text?"pointer":"default",fontFamily:"inherit",flexShrink:0}}>Adicionar</button></div>{suggested.length>0&&(<div style={{display:"flex",gap:6,padding:"0 16px 8px",overflowX:"auto",scrollbarWidth:"none"}}>{suggested.map(t=>(<button key={t} onClick={()=>setValue(v=>v.trimEnd()+" #"+t+" ")} style={{background:getTagColor(t).bg,color:getTagColor(t).text,border:"none",borderRadius:20,padding:"4px 10px",fontSize:12,fontFamily:"inherit",fontWeight:600,cursor:"pointer",display:"inline-flex",alignItems:"center",gap:4,flexShrink:0,whiteSpace:"nowrap"}}><span style={{width:5,height:5,borderRadius:"50%",background:getTagColor(t).dot}}/>{t}</button>))}</div>)}<div style={{padding:"0 16px 10px",fontSize:11.5,color:"#8E8E93"}}><b>#tag</b> categorizar &nbsp;·&nbsp; <b>@amanhã</b> data &nbsp;·&nbsp; <b>!1 !2 !3</b> prioridade</div></div>);
+}
+function PillBar({allTags,tasksByTag,tasksByPriority,onTag,onPriority}){
+  return(<div style={{display:"flex",gap:8,padding:"10px 20px 4px",overflowX:"auto",flexShrink:0,scrollbarWidth:"none"}}>{Object.entries(PRIORITIES).map(([key,p])=>{const count=(tasksByPriority[key]||[]).filter(t=>!t._done).length;if(!count)return null;return <button key={key} onClick={()=>onPriority(key)} style={{background:p.bg,color:p.text,border:"none",borderRadius:20,padding:"6px 12px",fontSize:13,fontFamily:"inherit",fontWeight:700,cursor:"pointer",display:"inline-flex",alignItems:"center",gap:5,whiteSpace:"nowrap",flexShrink:0}}><span style={{color:p.dot,fontSize:10,fontWeight:900}}>{p.icon}</span>{p.label}<span style={{background:p.dot,color:"white",borderRadius:10,padding:"1px 6px",fontSize:11,fontWeight:700,marginLeft:2}}>{count}</span></button>;})} {Object.keys(PRIORITIES).some(k=>(tasksByPriority[k]||[]).filter(t=>!t._done).length>0)&&allTags.length>0&&(<div style={{width:1,background:"#E0E0E6",borderRadius:1,margin:"4px 2px",flexShrink:0}}/>)}{allTags.map(tag=>{const c=getTagColor(tag);const count=(tasksByTag[tag]||[]).filter(t=>!t._done).length;return <button key={tag} onClick={()=>onTag(tag)} style={{background:c.bg,color:c.text,border:"none",borderRadius:20,padding:"6px 12px",fontSize:13,fontFamily:"inherit",fontWeight:600,cursor:"pointer",display:"inline-flex",alignItems:"center",gap:5,whiteSpace:"nowrap",flexShrink:0}}><span style={{width:7,height:7,borderRadius:"50%",background:c.dot}}/>#{tag}{count>0&&<span style={{background:c.dot,color:"white",borderRadius:10,padding:"1px 6px",fontSize:11,fontWeight:700,marginLeft:2}}>{count}</span>}</button>;})}</div>);
+}
+function Clock(){
+  const fmt=()=>{const n=new Date();return`${String(n.getHours()).padStart(2,"0")}:${String(n.getMinutes()).padStart(2,"0")}`;};
+  const [time,setTime]=useState(fmt);
+  useEffect(()=>{const id=setInterval(()=>setTime(fmt()),10000);return()=>clearInterval(id);},[]);
+  return <span style={{fontSize:15,fontWeight:600}}>{time}</span>;
+}
+function App(){
+  const [tasks,setTasks]=useState(()=>lsGet(LS_TASKS,SEED_TASKS));
+  const [doneMap,setDoneMap]=useState(()=>lsGet(LS_DONE,{}));
+  const [savedTags,setSavedTags]=useState(()=>lsGet(LS_TAGS,SEED_TAGS));
+  const [view,setView]=useState({type:"all"});
+  const [adding,setAdding]=useState(false);
+  const [editing,setEditing]=useState(null);
+  const [slideIn,setSlideIn]=useState(true);
+  useEffect(()=>{lsSet(LS_TASKS,tasks);},[tasks]);
+  useEffect(()=>{lsSet(LS_DONE,doneMap);},[doneMap]);
+  useEffect(()=>{lsSet(LS_TAGS,savedTags);},[savedTags]);
+  useEffect(()=>{setSlideIn(false);const t=setTimeout(()=>setSlideIn(true),20);return()=>clearTimeout(t);},[view]);
+  const mergeTags=newTags=>setSavedTags(prev=>[...new Set([...prev,...newTags])]);
+  const toggle=id=>setDoneMap(d=>({...d,[id]:!d[id]}));
+  const addTask=parsed=>{setTasks(p=>[...p,{id:Date.now(),...parsed}]);mergeTags(parsed.tags);setAdding(false);};
+  const saveTask=updated=>{setTasks(p=>p.map(t=>t.id===updated.id?updated:t));mergeTags(updated.tags);setEditing(null);};
+  const deleteTask=id=>{setTasks(p=>p.filter(t=>t.id!==id));setEditing(null);};
+  const withDone=tasks.map(t=>({...t,_done:!!doneMap[t.id]}));
+  const activeTags=[...new Set([...savedTags,...tasks.flatMap(t=>t.tags)])].sort();
+  const tasksByTag=Object.fromEntries(activeTags.map(tag=>[tag,withDone.filter(t=>t.tags.includes(tag))]));
+  const tasksByPriority=Object.fromEntries(Object.keys(PRIORITIES).map(p=>[p,withDone.filter(t=>t.priority===p)]));
+  const visible=view.type==="tag"?withDone.filter(t=>t.tags.includes(view.value)):view.type==="priority"?withDone.filter(t=>t.priority===view.value):withDone;
+  const sorted=[...visible].sort((a,b)=>{
+    if(a._done!==b._done)return a._done?1:-1;
+    const pa=a.priority?parseInt(a.priority[1]):9,pb=b.priority?parseInt(b.priority[1]):9;
+    if(pa!==pb)return pa-pb;
+    if(a.dueDate&&b.dueDate)return new Date(a.dueDate)-new Date(b.dueDate);
+    if(a.dueDate)return -1;if(b.dueDate)return 1;return 0;
+  });
+  const goBack=()=>{setAdding(false);setView({type:"all"});};
+  const pendingCount=sorted.filter(t=>!t._done).length;
+  const vl=view.type==="tag"?{title:`#${view.value}`,subtitle:"Tag"}:view.type==="priority"?{title:PRIORITIES[view.value].label,subtitle:"Prioridade"}:{title:"Tarefas",subtitle:"As minhas"};
+  return(<div style={{maxWidth:390,margin:"0 auto",minHeight:"100vh",background:"#F2F2F7",display:"flex",flexDirection:"column"}}><div style={{height:44,display:"flex",alignItems:"center",justifyContent:"space-between",padding:"0 20px",flexShrink:0}}><Clock/><div style={{display:"flex",gap:6,alignItems:"center"}}><svg width="16" height="12" viewBox="0 0 16 12" fill="#1C1C1E"><rect x="0" y="4" width="3" height="8" rx="1"/><rect x="4.5" y="2.5" width="3" height="9.5" rx="1"/><rect x="9" y="0.5" width="3" height="11.5" rx="1"/><rect x="13.5" y="0" width="2.5" height="12" rx="1" opacity="0.3"/></svg><svg width="15" height="11" viewBox="0 0 15 11" fill="none"><path d="M7.5 2.5C9.5 2.5 11.3 3.3 12.6 4.6L14 3.2C12.3 1.5 10 0.5 7.5 0.5C5 0.5 2.7 1.5 1 3.2L2.4 4.6C3.7 3.3 5.5 2.5 7.5 2.5Z" fill="#1C1C1E"/><path d="M7.5 5.5C8.7 5.5 9.8 6 10.6 6.8L12 5.4C10.8 4.2 9.2 3.5 7.5 3.5C5.8 3.5 4.2 4.2 3 5.4L4.4 6.8C5.2 6 6.3 5.5 7.5 5.5Z" fill="#1C1C1E"/><circle cx="7.5" cy="9" r="1.5" fill="#1C1C1E"/></svg><div style={{display:"flex",alignItems:"center",gap:2}}><div style={{width:25,height:12,border:"1.5px solid #1C1C1E",borderRadius:3,padding:"1.5px 2px",display:"flex",alignItems:"center"}}><div style={{width:"80%",height:"100%",background:"#34C759",borderRadius:1.5}}/></div></div></div></div><div style={{background:"#F2F2F7",padding:"8px 20px 0",flexShrink:0}}>{view.type!=="all"&&(<button onClick={goBack} style={{background:"none",border:"none",cursor:"pointer",color:"#007AFF",fontSize:16,fontFamily:"inherit",display:"flex",alignItems:"center",gap:4,padding:"4px 0 8px",fontWeight:400}}><svg width="8" height="14" viewBox="0 0 8 14" fill="none"><path d="M7 1L1 7L7 13" stroke="#007AFF" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>Todas as tarefas</button>)}<div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-end",paddingBottom:4}}><div><div style={{fontSize:13,fontWeight:600,color:"#8E8E93",letterSpacing:"0.04em",textTransform:"uppercase",marginBottom:2}}>{vl.subtitle}</div><div style={{fontSize:32,fontWeight:700,color:"#1C1C1E",letterSpacing:"-0.5px",display:"flex",alignItems:"center",gap:8}}>{vl.title}{view.type==="tag"&&<Tag label={view.value}/>}{view.type==="priority"&&<PriorityBadge level={view.value}/>}</div></div><div style={{fontSize:14,color:"#8E8E93",paddingBottom:6}}>{pendingCount} pendentes</div></div></div>{view.type==="all"&&activeTags.length>0&&(<PillBar allTags={activeTags} tasksByTag={tasksByTag} tasksByPriority={tasksByPriority} onTag={tag=>{setAdding(false);setView({type:"tag",value:tag});}} onPriority={p=>{setAdding(false);setView({type:"priority",value:p});}}/>)}<div style={{flex:1,overflowY:"auto",padding:"8px 0",opacity:slideIn?1:0,transform:slideIn?"translateX(0)":"translateX(18px)",transition:"opacity 0.2s ease, transform 0.2s ease"}}>{sorted.length===0?(<div style={{textAlign:"center",padding:"60px 40px",color:"#8E8E93"}}><div style={{fontSize:40,marginBottom:12}}>✓</div><div style={{fontSize:16,fontWeight:600,color:"#3C3C43",marginBottom:4}}>Sem tarefas</div><div style={{fontSize:14}}>Adiciona a tua primeira tarefa.</div></div>):(<div style={{background:"#FFF",margin:"0 16px",borderRadius:16,padding:"0 16px",overflow:"hidden"}}>{sorted.map(task=>(<TaskRow key={task.id} task={task} done={task._done} onToggle={()=>toggle(task.id)} onTagClick={tag=>{setAdding(false);setView({type:"tag",value:tag});}} onPriorityClick={p=>{setAdding(false);setView({type:"priority",value:p});}} onEdit={()=>{setAdding(false);setEditing(task);}}/>))}</div>)}</div><div style={{flexShrink:0}}>{adding?(<AddTaskBar prefixTag={view.type==="tag"?view.value:null} prefixPriority={view.type==="priority"?view.value:null} allSavedTags={savedTags} onAdd={addTask} onCancel={()=>setAdding(false)}/>):(<div style={{background:"#FFF",borderTop:"1px solid #E8E8EC",padding:"12px 16px 28px"}}><button onClick={()=>setAdding(true)} style={{width:"100%",background:"#007AFF",color:"white",border:"none",borderRadius:14,padding:"14px",fontSize:16,fontWeight:600,fontFamily:"inherit",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:8}} onMouseEnter={e=>e.currentTarget.style.opacity="0.85"} onMouseLeave={e=>e.currentTarget.style.opacity="1"}><svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 2v12M2 8h12" stroke="white" strokeWidth="2.5" strokeLinecap="round"/></svg>{view.type==="tag"?`Nova tarefa em #${view.value}`:view.type==="priority"?`Nova tarefa — ${PRIORITIES[view.value].label}`:"Nova tarefa"}</button></div>)}</div>{editing&&<EditModal task={editing} allSavedTags={savedTags} onSave={saveTask} onDelete={deleteTask} onClose={()=>setEditing(null)}/>}</div>);
+}
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>
